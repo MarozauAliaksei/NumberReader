@@ -1,69 +1,40 @@
+import os
 import torch
-from PIL import Image
-import torchvision.transforms as transforms
+import random
+from torch.utils.data import DataLoader
+from dataset import OCRDataset, collate_fn
 from model import CRNN
-from Dataset import OCRDataset  # чтобы использовать LABEL2CHAR
-from config import config as config
+from train import train_epoch, get_optimizer, get_criterion, ctc_decode
+from config import *
+from infer import preprocess_image
 
-# -----------------------------
-# Конфигурация
-# -----------------------------
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-img_height = config['img_height']
-img_width = config['img_width']
+if __name__=="__main__":
+    train_dir="data/train/images"
+    dataset = OCRDataset(train_dir)
+    loader = DataLoader(dataset,batch_size=BATCH_SIZE,shuffle=True,collate_fn=collate_fn)
 
-# Путь к сохраненной модели
-checkpoint_path = "./checkpoint/crnn.pt"  # укажи свой путь
+    model = CRNN(len(idx2char)).to(DEVICE)
+    criterion = get_criterion()
+    optimizer = get_optimizer(model,LR)
 
-# -----------------------------
-# Создаем модель и загружаем веса
-# -----------------------------
-num_class = len(OCRDataset.LABEL2CHAR) + 1
-crnn = CRNN(
-    1, img_height, img_width, num_class,
-    map_to_seq_hidden=128,
-    rnn_hidden=256,
-    leaky_relu=True
-)
-crnn.load_state_dict(torch.load(checkpoint_path, map_location=device))
-crnn.to(device)
-crnn.eval()
+    for epoch in range(1,EPOCHS+1):
+        train_epoch(model,loader,criterion,optimizer,epoch)
 
-# -----------------------------
-# Функция для предсказания числа с изображения
-# -----------------------------
-def predict_image(image_path):
-    # Загружаем и преобразуем изображение
-    image = Image.open(image_path).convert("L")  # конвертируем в grayscale
-    transform = transforms.Compose([
-        transforms.Resize((img_height, img_width)),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5,), (0.5,))
-    ])
-    image = transform(image).unsqueeze(0).to(device)  # добавляем batch dimension
+        # 🔹 Пример предсказания на случайной картинке
+        sample_idx = random.randint(0,len(dataset)-1)
+        img_tensor, label_tensor, _ = dataset[sample_idx]
+        img_tensor = img_tensor.unsqueeze(0).to(DEVICE)
+        model.eval()
+        with torch.no_grad():
+            preds = model(img_tensor)
+            preds_log_probs = preds.log_softmax(2)
+            decoded = ctc_decode(preds_log_probs)
+        true_label = "".join([idx2char[i] for i in label_tensor.tolist()])
+        print(f"Пример после эпохи {epoch}:")
+        print(f"  Истинная метка: {true_label}")
+        print(f"  Предсказание: {decoded[0]}")
+        model.train()
 
-    # Прямой проход через модель
-    with torch.no_grad():
-        logits = crnn(image)
-        preds = torch.argmax(logits, dim=2).permute(1, 0)  # (batch, seq_len)
+    torch.save(model.state_dict(),"crnn_weights.pth")
+    print("Модель сохранена")
 
-    # Greedy-декодирование
-    result = []
-    for seq in preds:
-        string = []
-        prev = -1
-        for p in seq:
-            p = p.item()
-            if p != prev and p != 0:  # 0 = blank
-                string.append(OCRDataset.LABEL2CHAR[p])
-            prev = p
-        result.append("".join(string))
-
-    return result[0]
-
-# -----------------------------
-# Тестируем на изображении
-# -----------------------------
-image_path = "./data/test/images/42_.jpg"  # укажи путь к картинке
-number = predict_image(image_path)
-print("Распознанное число:", number)

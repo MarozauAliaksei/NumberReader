@@ -1,25 +1,20 @@
-# config.py
+import torch
 
-train_config = {
-    "data_dir": "./data",
-    "checkpoints_dir": "./checkpoints",
-    "reload_checkpoint": None,
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-    "img_height": 32,
-    "img_width": 128,
-    "img_channel": 1,
+# Размеры картинок
+IMG_HEIGHT = 32
+IMG_WIDTH = 128
 
-    "epochs": 20,
-    "train_batch_size": 64,
-    "val_batch_size": 64,  # <-- добавлено
-    "lr": 1e-3,
-    "cpu_workers": 4,
+# Обучение
+BATCH_SIZE = 16
+EPOCHS = 50
+LR = 1e-3
 
-    "show_interval": 50,
-    "valid_interval": 200,
-    "save_interval": 1000,
+# Алфавит (только цифры)
+ALPHABET = "0123456789"
+BLANK_IDX = 0  # для CTC
 
-    "map_to_seq_hidden": 64,
-    "rnn_hidden": 256,
-    "leaky_relu": False
-}
+# Маппинг символов
+idx2char = ["-"] + list(ALPHABET)  # "-" = blank
+char2idx = {c: i for i, c in enumerate(idx2char)}
