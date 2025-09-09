@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from config import *
 
+
 class CRNN(nn.Module):
     def __init__(self, num_classes, dropout_cnn=0.2, dropout_rnn=0.3):
         super(CRNN, self).__init__()
@@ -19,7 +20,7 @@ class CRNN(nn.Module):
         self.drop_cnn = nn.Dropout2d(dropout_cnn)
 
         # ----------------- RNN -----------------
-        self.gru_input_size = (IMG_HEIGHT // 4) * 64  # после 2 стридов=4
+        self.gru_input_size = (IMG_HEIGHT // 4) * 64
         self.gru_hidden_size = 128
         self.gru_layers = 2
         self.gru = nn.GRU(
@@ -50,13 +51,9 @@ class CRNN(nn.Module):
 
         # GRU
         x, _ = self.gru(x)  # [B,W,2*hidden]
-
-        # FC + log_softmax
-        x = self.fc(x)              # [B,W,num_classes]
+        x = self.fc(x)
         x = F.log_softmax(x, dim=-1)
-
-        # Для CTC обычно [W,B,C]
-        x = x.permute(1,0,2)        # [W,B,num_classes]
+        x = x.permute(1,0,2)
         return x
 
 

@@ -2,17 +2,18 @@ import os
 import torch
 import random
 from torch.utils.data import DataLoader, random_split
+from train import ctc_beam_search_decode as ctc_decode
 from dataset import *
 from train import *
 from model import *
 from config import *
 if __name__ == "__main__":
-    train_dir = "NumberReader/data/train/images"
-    val_dir = "NumberReader/data/val/images"
+    train_dir = "data/train/images"
+    val_dir = "data/val/images"
 
     # 📂 Загружаем весь датасет
-    train_ds = OCRDataset(train_dir)
-    val_ds = OCRDataset(val_dir)
+    train_ds = OCRDataset(train_dir, augment=True)
+    val_ds = OCRDataset(val_dir, augment=True)
 
 
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_fn)

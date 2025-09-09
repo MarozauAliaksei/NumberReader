@@ -2,11 +2,10 @@ import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import Levenshtein  # pip install python-Levenshtein
+import Levenshtein
 from config import *
-# ------------------
-# CER (Character Error Rate)
-# ------------------
+
+
 def cer(preds, targets):
     total_dist, total_len = 0, 0
     for p, t in zip(preds, targets):
@@ -14,9 +13,7 @@ def cer(preds, targets):
         total_len += len(t)
     return total_dist / max(1, total_len)
 
-# ------------------
-# Обучение одной эпохи
-# ------------------
+
 def train_epoch(model, loader, criterion, optimizer, epoch):
     model.train()
     total_loss = 0
@@ -43,18 +40,14 @@ def train_epoch(model, loader, criterion, optimizer, epoch):
     print(f"[TRAIN] Epoch {epoch} | Loss: {avg_loss:.4f} | Time: {time.time()-start:.1f}s")
     return avg_loss
 
-# ------------------
-# Валидация
-# ------------------
-def validate(model, loader, criterion, epoch):
+
+def validate(model, loader, criterion, epoch, beam_size=5):
     model.eval()
     total_loss = 0
     all_preds, all_targets = [], []
     with torch.no_grad():
         for imgs, labels, label_lengths in loader:
             imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
-
-    # ⚡️ Главное: label_lengths точно размером [batch_size] и типа long
             label_lengths = label_lengths.to(DEVICE).long()
 
             preds = model(imgs)               # [W, B, C]
@@ -68,13 +61,10 @@ def validate(model, loader, criterion, epoch):
             )
 
             loss = criterion(preds_log_probs, labels, input_lengths, label_lengths)
-
             total_loss += loss.item()
 
-            # декодируем предсказания
-            decoded = ctc_decode(preds_log_probs)
+            decoded = ctc_beam_search_decode(preds_log_probs, beam_size=beam_size)
 
-            # превращаем labels обратно в текст
             labels_cpu = labels.cpu().numpy().tolist()
             label_lengths_cpu = label_lengths.cpu().numpy().tolist()
             idx = 0
@@ -90,30 +80,60 @@ def validate(model, loader, criterion, epoch):
     avg_loss = total_loss / len(loader)
     val_cer = cer(all_preds, all_targets)
     print(f"[VAL]   Epoch {epoch} | Loss: {avg_loss:.4f} | CER: {val_cer:.4f}")
+
+    # 👀 Покажем первые 5 примеров
+    for p, t in list(zip(all_preds, all_targets))[:5]:
+        print(f"   PRED: {p} | TRUE: {t}")
+
     return avg_loss, val_cer
 
-# ------------------
-# Декодирование CTC
-# ------------------
-def ctc_decode(preds):
-    preds = preds.permute(1, 0, 2)  # [B, W, C]
-    pred_idxs = preds.argmax(2).cpu().numpy()
+
+def ctc_beam_search_decode(preds_log_probs, beam_size=5, target_len=8):
+    """
+    Beam Search CTC decoder для цифр 0–9 + BLANK
+    preds_log_probs: [W, B, C] (log softmax вероятности)
+    """
+    preds_log_probs = preds_log_probs.permute(1, 0, 2)  # [B, W, C]
     results = []
-    for idx_seq in pred_idxs:
-        out_str = ""
-        prev = BLANK_IDX
-        for idx in idx_seq:
-            if idx != prev and idx != BLANK_IDX:
-                out_str += idx2char[idx]
-            prev = idx
+    for seq in preds_log_probs:  # [W, C]
+        W, C = seq.shape
+        beams = [(("", BLANK_IDX), 0.0)]  # (строка, последний_idx), лог-скор
+        for t in range(W):
+            log_probs = seq[t].cpu().numpy()
+            new_beams = []
+            for (s, last), score in beams:
+                for c in range(C):
+                    new_score = score + log_probs[c]
+                    if c == BLANK_IDX:
+                        new_beams.append(((s, last), new_score))
+                    else:
+                        if c == last:
+                            # повтор символа → тот же s
+                            new_beams.append(((s, c), new_score))
+                        else:
+                            new_s = s + idx2char[c]
+                            new_beams.append(((new_s, c), new_score))
+            # оставляем top beam_size
+            new_beams.sort(key=lambda x: x[1], reverse=True)
+            beams = new_beams[:beam_size]
+
+        best_seq, _ = max(beams, key=lambda x: x[1])
+        out_str = best_seq[0]
+
+        # --- подгонка до target_len ---
+        if len(out_str) > target_len:
+            out_str = out_str[:target_len]
+        elif len(out_str) < target_len:
+            pad_char = out_str[-1] if out_str else "0"
+            out_str = out_str.ljust(target_len, pad_char)
+
         results.append(out_str)
     return results
 
-# ------------------
-# Оптимизатор и критерий
-# ------------------
+
 def get_optimizer(model, lr=1e-3):
     return optim.Adam(model.parameters(), lr=lr)
+
 
 def get_criterion():
     return nn.CTCLoss(blank=BLANK_IDX, zero_infinity=True)

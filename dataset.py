@@ -3,19 +3,23 @@ import cv2
 import torch
 from torch.utils.data import Dataset
 from config import *
+import random
+import numpy as np
 
 # -----------------------------
-# OCR Dataset (с центрированным паддингом)
+# OCR Dataset (только 8 цифр) с аугментацией
 # -----------------------------
 class OCRDataset(Dataset):
-    def __init__(self, root):
+    def __init__(self, root, augment=False):
         self.root = root
+        self.augment = augment
         files = sorted([f for f in os.listdir(root) if f.lower().endswith((".jpg", ".png", ".jpeg"))])
         self.files = []
         self.labels = []
         for f in files:
             label = os.path.splitext(f)[0].split("_")[0]
-            if all(c in char2idx for c in label):
+            # ✅ фильтруем только 8-значные метки из допустимых символов
+            if len(label) == 8 and all(c in char2idx for c in label):
                 self.files.append(f)
                 self.labels.append(label)
 
@@ -26,19 +30,21 @@ class OCRDataset(Dataset):
         img_path = os.path.join(self.root, self.files[idx])
         img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
 
-        # --- Ресайз по высоте с сохранением соотношения сторон ---
+        # --- Ресайз по высоте с сохранением пропорций ---
         h, w = img.shape
-        new_w = max(1, int(w * IMG_HEIGHT / h))  # защита от нуля
+        new_w = max(1, int(w * IMG_HEIGHT / h))
         img = cv2.resize(img, (new_w, IMG_HEIGHT))
 
-        # --- Нормализация (без бинаризации) ---
+        # --- Аугментация ---
+        if self.augment:
+            img = self.apply_augmentation(img)
+
+        # --- Нормализация ---
         img = img.astype('float32') / 255.0
         img = (img - 0.5) / 0.5
-
-        # --- В Tensor ---
         img_tensor = torch.tensor(img, dtype=torch.float32).unsqueeze(0)  # [1,H,W]
 
-        # --- Центрированный паддинг по ширине ---
+        # --- Центрированный паддинг до IMG_WIDTH ---
         if new_w < IMG_WIDTH:
             pad_total = IMG_WIDTH - new_w
             pad_left = pad_total // 2
@@ -47,14 +53,35 @@ class OCRDataset(Dataset):
         elif new_w > IMG_WIDTH:
             img_tensor = img_tensor[:, :, :IMG_WIDTH]
 
-        # --- Массив меток ---
+        # --- Метка (ровно 8 цифр) ---
         label = torch.tensor([char2idx[c] for c in self.labels[idx]], dtype=torch.long)
         return img_tensor, label, len(label)
 
+    def apply_augmentation(self, img):
+        # 1️⃣ Случайный поворот (-5..5 градусов)
+        angle = random.uniform(-5, 5)
+        M = cv2.getRotationMatrix2D((img.shape[1]/2, img.shape[0]/2), angle, 1)
+        img = cv2.warpAffine(img, M, (img.shape[1], img.shape[0]), borderMode=cv2.BORDER_REPLICATE)
 
-# -----------------------------
-# Collate function для DataLoader
-# -----------------------------
+        # 2️⃣ Случайный сдвиг (-2..2 пикселя)
+        tx = random.uniform(-2, 2)
+        ty = random.uniform(-2, 2)
+        M = np.float32([[1, 0, tx], [0, 1, ty]])
+        img = cv2.warpAffine(img, M, (img.shape[1], img.shape[0]), borderMode=cv2.BORDER_REPLICATE)
+
+        # 3️⃣ Яркость/контраст
+        alpha = random.uniform(0.8, 1.2)  # контраст
+        beta = random.uniform(-10, 10)    # яркость
+        img = cv2.convertScaleAbs(img, alpha=alpha, beta=beta)
+
+        # 4️⃣ Гауссов шум (30% вероятности)
+        if random.random() < 0.3:
+            noise = np.random.normal(0, 5, img.shape).astype(np.uint8)
+            img = cv2.add(img, noise)
+
+        return img
+
+
 def collate_fn(batch):
     imgs, labels, label_lengths = zip(*batch)
     imgs = torch.stack(imgs)                   # [B,1,H,W]
