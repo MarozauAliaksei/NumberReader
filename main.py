@@ -12,11 +12,11 @@ from Number_reader import DigitCNN  # Предобученная CNN
 # -------------------------
 # Настройки
 # -------------------------
-PRETRAIN_EPOCHS = 10 # сколько эпох обучаем только RNN, CNN заморожена
+PRETRAIN_EPOCHS = 40 # сколько эпох обучаем только RNN, CNN заморожена
 TOTAL_EPOCHS = EPOCHS  # общее число эпох обучения
 
 if __name__ == "__main__":
-    train_dir = "data/train/images"
+    train_dir = "data/train/images/augmented"
     val_dir = "data/val/images"
 
     # -------------------------

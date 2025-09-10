@@ -35,10 +35,6 @@ class OCRDataset(Dataset):
         new_w = max(1, int(w * IMG_HEIGHT / h))
         img = cv2.resize(img, (new_w, IMG_HEIGHT))
 
-        # --- Аугментация ---
-        if self.augment:
-            img = self.apply_augmentation(img)
-
         # --- Нормализация ---
         img = img.astype('float32') / 255.0
         img = (img - 0.5) / 0.5
@@ -56,31 +52,6 @@ class OCRDataset(Dataset):
         # --- Метка (ровно 8 цифр) ---
         label = torch.tensor([char2idx[c] for c in self.labels[idx]], dtype=torch.long)
         return img_tensor, label, len(label)
-
-    def apply_augmentation(self, img):
-        # 1️⃣ Случайный поворот (-5..5 градусов)
-        angle = random.uniform(-5, 5)
-        M = cv2.getRotationMatrix2D((img.shape[1]/2, img.shape[0]/2), angle, 1)
-        img = cv2.warpAffine(img, M, (img.shape[1], img.shape[0]), borderMode=cv2.BORDER_REPLICATE)
-
-        # 2️⃣ Случайный сдвиг (-2..2 пикселя)
-        tx = random.uniform(-2, 2)
-        ty = random.uniform(-2, 2)
-        M = np.float32([[1, 0, tx], [0, 1, ty]])
-        img = cv2.warpAffine(img, M, (img.shape[1], img.shape[0]), borderMode=cv2.BORDER_REPLICATE)
-
-        # 3️⃣ Яркость/контраст
-        alpha = random.uniform(0.8, 1.2)  # контраст
-        beta = random.uniform(-10, 10)    # яркость
-        img = cv2.convertScaleAbs(img, alpha=alpha, beta=beta)
-
-        # 4️⃣ Гауссов шум (30% вероятности)
-        if random.random() < 0.3:
-            noise = np.random.normal(0, 5, img.shape).astype(np.uint8)
-            img = cv2.add(img, noise)
-
-        return img
-
 
 def collate_fn(batch):
     imgs, labels, label_lengths = zip(*batch)
