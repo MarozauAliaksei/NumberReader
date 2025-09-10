@@ -37,7 +37,7 @@ class CRNN(nn.Module):
 
     def forward(self, x):
         # x: [B,1,H,W]
-        x = F.leaky_relu(self.norm1(self.conv1(x)))
+        x = F.leaky_relu(self.norm1(self.conv1(x)))# Заменить на бэтч нормы скип конеккшон вместо дропаут
         x = F.leaky_relu(self.norm2(self.conv2(x)))
         x = self.drop_cnn(x)
         x = F.leaky_relu(self.norm3(self.conv3(x)))
@@ -46,7 +46,7 @@ class CRNN(nn.Module):
 
         b, c, h, w = x.size()  # [B,C,H,W]
 
-        # [B,C,H,W] -> [B,W,H,C] -> [B,W,H*C] для GRU
+        # [B,C,H,W] -> [B,W,H,C] -> [B,W,H*C] для GRU не нужон
         x = x.permute(0, 3, 2, 1).reshape(b, w, h * c)
 
         # GRU
