@@ -12,7 +12,7 @@ from Number_reader import DigitCNN  # Предобученная CNN
 # -------------------------
 # Настройки
 # -------------------------
-PRETRAIN_EPOCHS = 3  # сколько эпох обучаем только RNN, CNN заморожена
+PRETRAIN_EPOCHS = 10 # сколько эпох обучаем только RNN, CNN заморожена
 TOTAL_EPOCHS = EPOCHS  # общее число эпох обучения
 
 if __name__ == "__main__":
@@ -62,7 +62,7 @@ if __name__ == "__main__":
 
         # Заморозка CNN
         for name, param in model.named_parameters():
-            if 'conv' in name:
+            if any(layer in name for layer in ['conv1', 'conv2', 'conv3', 'conv4', 'norm1', 'norm2', 'norm3', 'norm4']):
                 param.requires_grad = False
         print("🔒 CNN заморожена на первые эпохи")
     else:
@@ -79,8 +79,10 @@ if __name__ == "__main__":
 
     # -------------------------
     # Обучение
-    # -------------------------
-    for epoch in range(1, TOTAL_EPOCHS + 1):
+    # ------------------------
+    CER = 1
+    epoch = 1
+    while CER > 1e-1:
         # Размораживаем CNN после PRETRAIN_EPOCHS
         if epoch == PRETRAIN_EPOCHS + 1:
             for name, param in model.named_parameters():
@@ -118,6 +120,7 @@ if __name__ == "__main__":
         print(f"   Предсказание:   {decoded[0]}")
         print("-" * 50)
         model.train()
+        epoch += 1
 
     # -------------------------
     # Финальная модель
