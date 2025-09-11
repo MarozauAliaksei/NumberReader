@@ -6,6 +6,49 @@ from config import *
 import random
 import numpy as np
 
+# dataset.py
+import os
+from PIL import Image
+import torch
+from torch.utils.data import Dataset
+import torchvision.transforms as transforms
+
+class DigitsDataset(Dataset):
+    """
+    Датасет для однозначных цифр (0–9) для предобучения CNN.
+    Папка должна быть структурирована как:
+        root/0/*.png
+        root/1/*.png
+        ...
+        root/9/*.png
+    """
+    def __init__(self, root, transform=None):
+        self.root = root
+        self.samples = []
+        for label_str in os.listdir(root):
+            label_dir = os.path.join(root, label_str)
+            if not os.path.isdir(label_dir):
+                continue
+            for fname in os.listdir(label_dir):
+                path = os.path.join(label_dir, fname)
+                self.samples.append((path, int(label_str)))
+
+        self.transform = transform or transforms.Compose([
+            transforms.Grayscale(),
+            transforms.Resize((32,32)),
+            transforms.ToTensor()
+        ])
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        path, label = self.samples[idx]
+        img = Image.open(path).convert("L")
+        if self.transform:
+            img = self.transform(img)
+        return img, label
+
 # -----------------------------
 # OCR Dataset (только 8 цифр) с аугментацией
 # -----------------------------

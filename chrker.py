@@ -183,6 +183,6 @@ if __name__ == "__main__":
     # Установите albumentations если нет: pip install albumentations
     
     # 1. Обработка всей папки
-    folder_path = "data/train/images"  # Замените на ваш путь
+    folder_path = "data/Numbers/9"  # Замените на ваш путь
     process_folder(folder_path, num_augmentations=3)
     

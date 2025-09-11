@@ -1,71 +1,58 @@
-# model_crnn_deep.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from config import *
-
-
-class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride=1):
-        super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, 3, stride=stride, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(out_channels)
-
-        self.shortcut = nn.Sequential()
-        if stride != 1 or in_channels != out_channels:
-            self.shortcut = nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, 1, stride=stride, bias=False),
-                nn.BatchNorm2d(out_channels)
-            )
-
-    def forward(self, x):
-        out = F.leaky_relu(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-        out += self.shortcut(x)
-        return F.leaky_relu(out)
-
 
 class CRNN(nn.Module):
-    def __init__(self, num_classes, dropout_fc=0.2):
+    def __init__(self, in_channel=1, num_classes=11, cnn_input_height=32, rnn_hidden=64, use_gru=True, dropout=0.1):
         super().__init__()
-        # Encoder
-        self.layer1 = ResidualBlock(1, 32, stride=1)
-        self.layer2 = ResidualBlock(32, 64, stride=2)
-        self.layer3 = ResidualBlock(64, 64, stride=1)
-        self.layer4 = ResidualBlock(64, 128, stride=2)
-        self.layer5 = ResidualBlock(128, 128, stride=1)
-        self.layer6 = ResidualBlock(128, 256, stride=2)
+        self.cnn_input_height = cnn_input_height
 
-        # Глобальное усреднение по высоте (оставляем только ширину как "время")
-        self.global_pool = nn.AdaptiveAvgPool2d((1, None))  # H → 1
+        # ---------- CNN (очень компактная)
+        self.cnn = nn.Sequential(
+            nn.Conv2d(in_channel, 16, 3, stride=1, padding=1), nn.ReLU(inplace=True),
+            nn.Conv2d(16, 32, 3, stride=2, padding=1), nn.ReLU(inplace=True),  # downsample
+            nn.Conv2d(32, 32, 3, stride=1, padding=1), nn.ReLU(inplace=True),
+            nn.Conv2d(32, 64, 3, stride=2, padding=1), nn.ReLU(inplace=True)   # downsample
+        )
 
-        self.drop_fc = nn.Dropout(dropout_fc)
-        self.fc = nn.Linear(256, num_classes)
+        cnn_output_height = cnn_input_height // 2 // 2
+        rnn_input_size = 64 * cnn_output_height
+
+        # ---------- RNN
+        self.rnn = nn.GRU(
+            input_size=rnn_input_size,
+            hidden_size=rnn_hidden,
+            num_layers=1,
+            batch_first=True,
+            bidirectional=True,
+            dropout=dropout
+        ) if use_gru else nn.LSTM(
+            input_size=rnn_input_size,
+            hidden_size=rnn_hidden,
+            num_layers=1,
+            batch_first=True,
+            bidirectional=True,
+            dropout=dropout
+        )
+
+        self.fc = nn.Linear(rnn_hidden*2, num_classes)
 
     def forward(self, x):
-        # [B,1,H,W]
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-        x = self.layer5(x)
-        x = self.layer6(x)  # [B,C,H’,W’]
+        x = self.cnn(x)  # [B, C, H, W]
+        x = F.adaptive_avg_pool2d(x, (self.cnn_input_height//4, None))
+        B, C, H, W = x.shape
+        x = x.permute(0,3,1,2).contiguous()  # [B, W, C, H]
+        x = x.view(B, W, C*H)
 
-        x = self.global_pool(x)  # [B,C,1,W]
-        x = x.squeeze(2).permute(0, 2, 1)  # [B,W,C]
+        self.rnn.flatten_parameters()
+        x, _ = self.rnn(x)
+        x = self.fc(x)
+        return F.log_softmax(x, dim=-1)
 
-        x = self.drop_fc(x)
-        x = self.fc(x)  # [B,W,num_classes]
-
-        x = F.log_softmax(x, dim=-1)
-        return x.permute(1, 0, 2)  # [W,B,num_classes]
-
-
-# --------- Тестовый запуск ---------
+# ----- Тест -----
 if __name__ == "__main__":
-    model = CRNNDeep(num_classes=11)
-    data = torch.randn(8, 1, 64, 256)  # [B,1,H,W]
+    data = torch.randn(4, 1, 32, 160)
+    model = TinyCRNN()
     out = model(data)
-    print(f"Input: {data.shape}, Output: {out.shape}")  # [W,B,num_classes]
+    print("Output shape:", out.shape)
+    print(f"Approx model size: {sum(p.numel() for p in model.parameters())*4/1024/1024:.2f} MB")

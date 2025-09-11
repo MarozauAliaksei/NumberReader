@@ -2,18 +2,17 @@ import os
 import torch
 import random
 from torch.utils.data import DataLoader
-from train import ctc_beam_search_decode as ctc_decode
-from dataset import *
-from train import *
-from model import *
+from train import ctc_beam_search_decode as ctc_decode, train_epoch, validate, get_criterion, get_optimizer
+from dataset import OCRDataset, collate_fn
+from model import CRNN  # или EfficientCRNN, если используем её
 from config import *
 from Number_reader import DigitCNN  # Предобученная CNN
 
 # -------------------------
 # Настройки
 # -------------------------
-PRETRAIN_EPOCHS = 2 # сколько эпох обучаем только RNN, CNN заморожена
-TOTAL_EPOCHS = EPOCHS  # общее число эпох обучения
+PRETRAIN_EPOCHS = 0  # сразу финетюн всей модели
+TOTAL_EPOCHS = EPOCHS
 
 if __name__ == "__main__":
     train_dir = "data/train/images/augmented"
@@ -25,76 +24,68 @@ if __name__ == "__main__":
     train_ds = OCRDataset(train_dir, augment=True)
     val_ds = OCRDataset(val_dir, augment=True)
 
-    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, collate_fn=collate_fn)
-    val_loader   = DataLoader(val_ds, batch_size=BATCH_SIZE, collate_fn=collate_fn)
+    train_loader = DataLoader(
+        train_ds, 
+        batch_size=BATCH_SIZE, 
+        shuffle=True,       # перемешиваем батчи
+        collate_fn=collate_fn
+    )
+    val_loader = DataLoader(
+        val_ds, 
+        batch_size=BATCH_SIZE, 
+        collate_fn=collate_fn
+    )
 
     # -------------------------
     # Модель
     # -------------------------
-    model = CRNN(len(idx2char)).to(DEVICE)
+    model = CRNN(in_channel=1, num_classes=11, cnn_input_height=32, use_gru=True)
+    model.to(DEVICE)
+    print(f"Params: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
 
-    # ---------------------------------------
-    # 🔥 Загрузка предобученных весов DigitCNN
-    # ---------------------------------------
+    # -------------------------
+    # Загрузка предобученной CNN
+    # -------------------------
     if os.path.exists("digit_pretrain.pth"):
-        print("⚡ Загружаем предобученные веса из digit_pretrain.pth...")
+        print("⚡ Загружаем предобученные веса DigitCNN...")
         digit_cnn = DigitCNN(num_classes=10).to(DEVICE)
         digit_cnn.load_state_dict(torch.load("digit_pretrain.pth", map_location=DEVICE))
         digit_cnn.eval()
 
-        # Копируем сверточные слои по имени
         model_dict = model.state_dict()
         cnn_dict = digit_cnn.state_dict()
-        mapping = {
-            'conv1.weight': 'conv1.weight',
-            'conv1.bias':   'conv1.bias',
-            'conv2.weight': 'conv2.weight',
-            'conv2.bias':   'conv2.bias',
-            'conv3.weight': 'conv3.weight',
-            'conv3.bias':   'conv3.bias',
-            'conv4.weight': 'conv4.weight',
-            'conv4.bias':   'conv4.bias',
-        }
-        pretrained_dict = {k: cnn_dict[v] for k,v in mapping.items() if v in cnn_dict}
-        model_dict.update(pretrained_dict)
-        model.load_state_dict(model_dict)
-        print("✅ Веса CNN успешно скопированы в CRNN")
 
-        # Заморозка CNN
-        for name, param in model.named_parameters():
-            if any(layer in name for layer in ['conv1', 'conv2', 'conv3', 'conv4', 'norm1', 'norm2', 'norm3', 'norm4']):
-                param.requires_grad = False
-        print("🔒 CNN заморожена на первые эпохи")
-    else:
-        print("⚠️ Файл digit_pretrain.pth не найден. Обучение с нуля.")
+        for k in cnn_dict.keys():
+            if k in model_dict:
+                model_dict[k] = cnn_dict[k]
+
+        model.load_state_dict(model_dict)
+        print("✅ Веса CNN скопированы в CRNN")
 
     # -------------------------
-    # Лосс и оптимизатор
+    # Лосс, оптимизатор и scheduler
     # -------------------------
     criterion = get_criterion()
     optimizer = get_optimizer(model, LR)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.5, patience=2, verbose=True
+    )
 
     best_cer = float("inf")
     best_epoch = -1
 
     # -------------------------
     # Обучение
-    # ------------------------
-    CER = 1
-    epoch = 1
-    while CER > 1e-1:
-        # Размораживаем CNN после PRETRAIN_EPOCHS
-        if epoch == PRETRAIN_EPOCHS + 1:
-            for name, param in model.named_parameters():
-                if 'conv' in name:
-                    param.requires_grad = True
-            print("🔓 CNN разморожена, начинаем fine-tune всей модели")
-
+    # -------------------------
+    for epoch in range(1, TOTAL_EPOCHS + 1):
         # --- Тренировка
         train_epoch(model, train_loader, criterion, optimizer, epoch)
 
         # --- Валидация
         val_loss, val_cer = validate(model, val_loader, criterion, epoch)
+
+        # --- Scheduler
+        scheduler.step(val_loss)
 
         # --- Сохранение лучшей модели
         if val_cer < best_cer:
@@ -110,9 +101,8 @@ if __name__ == "__main__":
 
         model.eval()
         with torch.no_grad():
-            preds = model(img_tensor)
-            preds_log_probs = preds.log_softmax(2)
-            decoded = ctc_decode(preds_log_probs)
+            preds = model(img_tensor)  # [B, W, C]
+            decoded = ctc_decode(preds)
 
         true_label = "".join([idx2char[i] for i in label_tensor.tolist()])
         print(f"\n📌 Пример после эпохи {epoch}:")
@@ -120,7 +110,6 @@ if __name__ == "__main__":
         print(f"   Предсказание:   {decoded[0]}")
         print("-" * 50)
         model.train()
-        epoch += 1
 
     # -------------------------
     # Финальная модель
