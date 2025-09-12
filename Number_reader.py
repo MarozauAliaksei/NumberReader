@@ -85,14 +85,11 @@ if __name__ == "__main__":
         print(f"Epoch {epoch+1}: Loss={total_loss/len(train_loader):.4f}")
         epoch += 1
 
-    # -----------------
-    # 5. Сохраняем веса CNN
-    # -----------------
     torch.save(model.state_dict(), "digit_pretrain.pth")
-    # -----------------
-    img_path = "data/testNum/0.png"  # поменяй путь на свою картинку
+
+    img_path = "data/testNum/0.png"
     image = Image.open(img_path)
-    image = transform(image).unsqueeze(0).to(device)  # [1,1,32,32]
+    image = transform(image).unsqueeze(0).to(device) 
 
     with torch.no_grad():
         output = model(image)

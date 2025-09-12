@@ -3,10 +3,6 @@ import cv2
 import torch
 from torch.utils.data import Dataset
 from config import *
-import random
-import numpy as np
-
-# dataset.py
 import os
 from PIL import Image
 import torch
@@ -14,14 +10,6 @@ from torch.utils.data import Dataset
 import torchvision.transforms as transforms
 
 class DigitsDataset(Dataset):
-    """
-    Датасет для однозначных цифр (0–9) для предобучения CNN.
-    Папка должна быть структурирована как:
-        root/0/*.png
-        root/1/*.png
-        ...
-        root/9/*.png
-    """
     def __init__(self, root, transform=None):
         self.root = root
         self.samples = []
@@ -49,9 +37,6 @@ class DigitsDataset(Dataset):
             img = self.transform(img)
         return img, label
 
-# -----------------------------
-# OCR Dataset (только 8 цифр) с аугментацией
-# -----------------------------
 class OCRDataset(Dataset):
     def __init__(self, root, augment=False):
         self.root = root
